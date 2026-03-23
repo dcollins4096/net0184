@@ -21,9 +21,9 @@ if not os.path.exists("dtools/starter1.py"):
     sys.exit(0)
           
 
-new_model   = 0
+new_model   = 1
 load_model  = 0
-train_model = 0
+train_model = 1
 save_model = 1
 plot_models = 1
 
