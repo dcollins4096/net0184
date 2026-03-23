@@ -54,7 +54,7 @@ def plot_three_flow(Eguess,Etarget,E_samples,fig=None,axs=None, title='', floati
 
     E1 = Etarget.flatten()
     E2 = Eguess.flatten()
-    pch.simple_phase(E1,E2,ax=axs[4], colorbar=False)
+    pch.simple_phase(E1,E2,ax=axs[4])
     axs[4].plot( [Emin,Emax],[Emin,Emax],c='k')
 
 
@@ -87,7 +87,7 @@ def plot_three_err(Eguess,Etarget,var,out_prob,mean,model,fig=None,axs=None, tit
 
     E1 = Etarget.flatten()
     E2 = Eguess.flatten()
-    pch.simple_phase(E1,E2,ax=axs[5], colorbar=False)
+    pch.simple_phase(E1,E2,ax=axs[5])
     axs[5].plot( [Emin,Emax],[Emin,Emax],c='k')
 
 def plot_scalars(net_name,train_loader, val_loader, tst_loader, model):
@@ -245,7 +245,7 @@ def plot_three(Eguess,Etarget,fig=None,axs=None, title='', floating=False):
     axs[2].set(title='pearson %0.4f'%er)
     E1 = Etarget.flatten()
     E2 = Eguess.flatten()
-    pch.simple_phase(E1,E2,ax=axs[2], colorbar=False)
+    pch.simple_phase(E1,E2,ax=axs[2])
     axs[2].plot( [Emin,Emax],[Emin,Emax],c='k')
     axs[2].set(xlabel='Actual pixel value',ylabel='Predicted')
     import dtools_global.math.power_spectrum as ps
@@ -279,8 +279,7 @@ def plot_loss_curve(net_name,model, suffix):
     plt.tight_layout()
     plt.savefig("%s/plots/%s_%s_err_time.png"%(os.environ['HOME'], net_name, suffix))
 
-
-def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
+def plot_all_scalars(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
     do_bispectrum=False
     net = importlib.import_module(f"networks_nbisht.{net_name}")
 
@@ -302,7 +301,7 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
 
     #ds_val = None
     #ds_tst = None
-    device = 'cpu'
+    device = 'cuda'
     model = model.to(device)
 
     #this_set = ds_val
@@ -322,18 +321,57 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
     error_list = defaultdict(list)
     if hasattr( model, 'predict_scalars'):
         plot_scalars(net_name,train_loader, val_loader, tst_loader,model)
-    if 0:
+
+
+def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
+    do_bispectrum=False
+    net = importlib.import_module(f"networks.{net_name}")
+
+    plot_loss_curve(net_name, model, suffix)
+
+    ds_train = net.SphericalDataset(all_data['train'].to('cpu'))
+    ds_val   = net.SphericalDataset(all_data['valid'].to('cpu'))
+    ds_tst   = net.SphericalDataset(all_data['test'].to('cpu')[:1000])
+
+    train_loader = DataLoader(ds_train, batch_size=1, shuffle=False, drop_last=False)
+    val_loader   = DataLoader(ds_val,   batch_size=1, shuffle=False, drop_last=False)
+    tst_loader   = DataLoader(ds_tst,   batch_size=1, shuffle=False, drop_last=False)
+                                
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+
+    if subset == 'test':
+        this_set = tst_loader
+        dataset = ds_tst
+        subs=['test']
+    elif subset == 'train':
+        this_set = train_loader
+        dataset = ds_train
+        subs=['train']
+    elif subset == 'valid':
+        this_set = val_loader
+        dataset = ds_val
+        subs = ['valid']
+
+    Nsamples=10
+    print('Compute losses on %s'%subset)
+    error_list = defaultdict(list)
+    loss_dicts = []
+    sort_by_err=False
+    if 1:
+        sort_by_err=True
 
         with torch.no_grad():
             for xb,yb in tqdm.tqdm(this_set):
+                xb = xb.to(device)
+                yb = yb.to(device)
                 moo = model( xb )
 
                 err_dict= model.criterion1(moo,yb)
                 for err in err_dict:
                     error_list[err].append(err_dict[err].item())
                 error_list['total'].append( sum(err_dict.values()).item())
-        #if erronly:
-        #    return error_list
+                loss_dicts.append(err_dict)
         fig,ax=plt.subplots(1,1)
         colors = {'L1_0':'c','L1_1':'m','L1_2':'y','L1_3':'m','L1_4':'m','L1_Multi':'m','Pear':'r','Grad':'g','SSIM':'b','Power':'purple', 'total':'k'}
         for err in error_list:
@@ -346,36 +384,39 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
         fig.savefig('%s/plots/%s_%s_%s_errors.png'%(os.environ['HOME'],net_name,suffix,subset))
 
 
-    #subs = ['train','valid','test']
-    #subs = ['test','valid', 'train']
-    #subs = ['valid']
-    if hasattr(model,'predict_scalars_only'):
-        return
+    sortby = 'total'
+    print("Plot losses sorted by",sortby)
     for ns,subset in enumerate(subs):
         mmin=20
         mmax=-20
         this_set = {'train':train_loader, 'valid':val_loader, 'test':tst_loader}[subset]
         if subset == 'test':
-            ppp = np.argsort(error_list['total'])
-            dothese = list( ppp[::ppp.size//30])
+                ppp = np.argsort(error_list[sortby])
+                dothese = ppp[::ppp.size//30]
             #dothese = ppp[:3]
         elif subset == 'valid':
             dothese = range(len(this_set))
         elif subset == 'train':
             #dothese = range( min([30, len(this_set)]))
-            ppp = np.argsort(error_list['total'])
-            #dothese = list( ppp[::ppp.size//30])
-            dothese = range(len(this_set))
+            ppp = np.argsort(error_list[sortby])
+            dothese = list( ppp[::ppp.size//30])
+            #dothese = range(len(this_set))
             
             #dothese = ppp[::50]
             #dothese = [ 939, 627, 448,1107, 543] +list( ppp[::ppp.size//30])
         #dothese=range(len(this_set))
-        print("DO", dothese)
+        else:
+            dothese = [0,1]
+        print("DO these", dothese)
+        print("Losses: ",sortby)
+        print( np.array(error_list[sortby])[dothese])
 
         with torch.no_grad():
-            for n, (xb,yb) in tqdm.tqdm(enumerate(this_set)):
-                if n not in dothese:
-                    continue
+            #for n, (xb,yb) in tqdm.tqdm(dothese)
+            for nplot,n in tqdm.tqdm(enumerate(dothese)):
+                xb,yb = dataset[n]
+                xb = xb.to(device).unsqueeze(0)
+                yb = yb.to(device).unsqueeze(0)
                 moo = model( xb)
                 EB_samples=None
                 if hasattr(model, 'flow_head'):
@@ -388,6 +429,8 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
                 #EB = yb[0][0]
                 EB = yb[0].squeeze(0)
                 EBguess = moo[0][0]
+                this_loss = loss_dicts[n]
+                #this_loss = model.criterion1(moo,yb)
 
                 if EB_samples is not None:
                     fig,axes=plt.subplots(3,5,figsize=(15,8))
@@ -403,6 +446,7 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
                     plt.close(fig)
                 else:
                     fig,axes=plt.subplots(3,5,figsize=(15,8))
+                    fig.suptitle('Total loss %0.2e'%(sum(this_loss.values())))
                     ax0,ax1,ax2=axes
                     EBguess = torch.nan_to_num(EBguess,nan=0.0)
                     EB = torch.nan_to_num(EB,nan=0.0)
@@ -418,7 +462,8 @@ def plot1(net_name,model, all_data, suffix = "", subset = 'test', erronly=True):
                         plot_three(EBguess[1,:,:], EB[1,:,:],title='B', axs=ax2, fig=fig)
 
                     fig.tight_layout()
-                    fig.savefig('%s/plots/%s_%s_%s_%04d.png'%(os.environ['HOME'],net_name,suffix,subset,n))
+                    outname='plots/%s_%s_%s_%04d.png'%(net_name,suffix,subset,nplot)
+                    fig.savefig(outname)
                     plt.close(fig)
 
     return model
